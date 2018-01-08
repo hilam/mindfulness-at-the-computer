@@ -6,10 +6,13 @@
 Software | Version | Docs | Support
 --- | --- | --- | ---
 PyInstaller | - | [link](http://pyinstaller.readthedocs.io/en/stable/) | -
-[Python](#python) | 3.6 | [link](https://docs.python.org/3/) | [Gitter](https://gitter.im/mindfulness-at-the-computer/Lobby), [SO](https://stackoverflow.com/questions/tagged/python)
+[Python](#python) | 3.5 | [link](https://docs.python.org/3/) | [Gitter](https://gitter.im/mindfulness-at-the-computer/Lobby), [SO](https://stackoverflow.com/questions/tagged/python)
 [Qt through PyQt](qt-and-pyqt) | 5.9 | [Qt](http://doc.qt.io/qt-5/) | [Gitter](https://gitter.im/mindfulness-at-the-computer/Lobby), #pyqt @ freenode IRC, [list](http://wiki.qt.io/Online_Communities)
 SQLite through sqlite3 | - | [py module](https://docs.python.org/3/library/sqlite3.html), [official](https://www.sqlite.org/docs.html) | [Gitter](https://gitter.im/mindfulness-at-the-computer/Lobby)
 [unittest + qttest](unittest-and-qttest) | | [unittest](https://docs.python.org/3/library/unittest.html) [qttest](http://doc.qt.io/qt-5/qtest.html)| [Gitter](https://gitter.im/mindfulness-at-the-computer/Lobby)
+
+The only external dependency for the software itself is PyQt5. In general we'd like to keep the
+number of external dependencies to a minimum to avoid complications
 
 
 ## Application structure

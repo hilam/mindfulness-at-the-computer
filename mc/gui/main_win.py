@@ -3,7 +3,12 @@ import sys
 from PyQt5 import QtCore
 from PyQt5 import QtGui
 from PyQt5 import QtWidgets
-from PyQt5 import QtMultimedia
+try:
+    from PyQt5 import QtMultimedia
+except ImportError:
+    logging.debug("ImportError for QtMultimedia - maybe because there's no sound card available")
+    # -If the system does not have a sound card (as for example Travis CI)
+    # -An alternative to this approach is to use this: http://doc.qt.io/qt-5/qaudiodeviceinfo.html#availableDevices
 import mc.gui.rest_action_list_wt
 import mc.model
 import mc.mc_global
@@ -12,8 +17,9 @@ import mc.gui.breathing_settings_wt
 import mc.gui.breathing_phrase_list_wt
 import mc.gui.rest_settings_wt
 import mc.gui.rest_dlg
-import mc.gui.breathing_popup
-import mc.gui.rest_reminder_popup
+import mc.gui.breathing_dlg
+import mc.gui.breathing_notification
+import mc.gui.rest_notification
 import mc.gui.rest_dlg
 
 
@@ -21,65 +27,27 @@ class MainWin(QtWidgets.QMainWindow):
     def __init__(self):
         super().__init__()
 
-        self.setGeometry(100, 64, 900, 670)
-        self.setWindowIcon(QtGui.QIcon(mc.mc_global.get_app_icon_path()))
-
         self.sys_tray = SystemTray()
-
-        if mc.mc_global.testing_bool:
-            data_storage_str = "{Testing - data stored in memory}"
-        else:
-            data_storage_str = "{Live - data stored on hard drive}"
-        window_title_str = (
-            mc.mc_global.APPLICATION_TITLE_STR
-            + " [" + mc.mc_global.APPLICATION_VERSION_STR + "] "
-            + data_storage_str
-        )
-        self.setWindowTitle(window_title_str)
-
-        self.setStyleSheet("selection-background-color:#bfef7f; selection-color:#000000;")
-
         self.rest_reminder_dialog = None
         self.rest_widget = None
         self.tray_icon = None
         self.rest_reminder_qtimer = None
         self.breathing_qtimer = None
 
-        central_w2 = QtWidgets.QWidget()
-        self.setCentralWidget(central_w2)
-        hbox_l3 = QtWidgets.QHBoxLayout()
-        central_w2.setLayout(hbox_l3)
-
-        vbox_l4 = QtWidgets.QVBoxLayout()
-        hbox_l3.addLayout(vbox_l4)
-
-        self.br_phrase_list_wt = mc.gui.breathing_phrase_list_wt.BreathingPhraseListWt()
-        vbox_l4.addWidget(self.br_phrase_list_wt)
-        self.br_phrase_list_wt.selection_changed_signal.connect(self.on_breathing_list_row_changed)
-        self.br_phrase_list_wt.phrase_changed_signal.connect(self.on_breathing_phrase_changed)
-
+        self.active_breathing_phrase_qgb = QtWidgets.QGroupBox("Active Breathing Phrase")
         self.br_settings_wt = mc.gui.breathing_settings_wt.BreathingSettingsWt()
-        vbox_l4.addWidget(self.br_settings_wt)
-        self.br_settings_wt.updated_signal.connect(self.on_breathing_settings_changed)
-        self.br_settings_wt.breathe_now_button_clicked_signal.connect(self.start_breathing_notification)
-
-        vbox_l4 = QtWidgets.QVBoxLayout()
-        hbox_l3.addLayout(vbox_l4)
-
-        self.rest_action_list_wt = mc.gui.rest_action_list_wt.RestActionListWt()
-        vbox_l4.addWidget(self.rest_action_list_wt)
-        self.rest_action_list_wt.update_signal.connect(self.on_rest_action_list_updated)
-        self.rest_action_list_wt.selection_changed_signal.connect(self.on_rest_action_list_row_changed)
-
+        self.br_phrase_list_wt = mc.gui.breathing_phrase_list_wt.BreathingPhraseListWt()
         self.rest_settings_wt = mc.gui.rest_settings_wt.RestSettingsWt()
-        vbox_l4.addWidget(self.rest_settings_wt)
-        self.rest_settings_wt.settings_updated_signal.connect(self.update_rest_timer)
-        self.rest_settings_wt.rest_now_button_clicked_signal.connect(self.on_rest_rest)
-        self.rest_settings_wt.rest_reset_button_clicked_signal.connect(self.update_rest_timer)
-        self.rest_settings_wt.rest_slider_value_changed_signal.connect(self.on_rest_slider_value_changed)
-
+        self.rest_action_list_wt = mc.gui.rest_action_list_wt.RestActionListWt()
         self.breathing_history_wt = mc.gui.breathing_history_wt.BreathingHistoryWt()
-        hbox_l3.addWidget(self.breathing_history_wt)
+
+        self._setup_initialize()
+
+        main_container_hbox_l3 = self._setup_main_container()
+
+        self._setup_add_first_panel_to_main_container(main_container_hbox_l3)
+        self._setup_add_breathing_phrase_list_to_main_container(main_container_hbox_l3)
+        self._setup_add_rest_action_list_to_main_container(main_container_hbox_l3)
 
         # Setup of Menu
         self.menu_bar = self.menuBar()
@@ -91,6 +59,82 @@ class MainWin(QtWidgets.QMainWindow):
 
         # Setup of Systray
         self.setup_systray()
+
+    def _setup_initialize(self):
+        self.setGeometry(100, 64, 900, 670)
+        self.setWindowIcon(QtGui.QIcon(mc.mc_global.get_app_icon_path()))
+        self._setup_set_window_title()
+        self.setStyleSheet("selection-background-color:#bfef7f; selection-color:#000000;")
+
+    def _setup_main_container(self):
+        central_w2 = QtWidgets.QWidget()
+        self.setCentralWidget(central_w2)
+        main_container_hbox_l3 = QtWidgets.QHBoxLayout()
+        central_w2.setLayout(main_container_hbox_l3)
+        return main_container_hbox_l3
+
+    def _setup_add_first_panel_to_main_container(self, main_container_hbox_l3):
+        first_panel_vbox_l4 = self._setup_new_panel_in_main_window(main_container_hbox_l3)
+        self._setup_configure_active_breathing_phrase(first_panel_vbox_l4)
+        first_panel_vbox_l4.addWidget(self.breathing_history_wt)
+
+    def _setup_configure_active_breathing_phrase(self, panel_vbox_l4):
+        panel_vbox_l4.addWidget(self.active_breathing_phrase_qgb)
+        active_breathing_phrase_vbox_l5 = QtWidgets.QVBoxLayout()
+        self.active_breathing_phrase_qgb.setLayout(active_breathing_phrase_vbox_l5)
+        self.title_text_qll = QtWidgets.QLabel(self.tr("title"))
+        active_breathing_phrase_vbox_l5.addWidget(self.title_text_qll)
+        self.title_text_qll.setWordWrap(True)
+        self.in_text_qll = QtWidgets.QLabel(self.tr("in"))
+        active_breathing_phrase_vbox_l5.addWidget(self.in_text_qll)
+        self.in_text_qll.setWordWrap(True)
+        self.out_text_qll = QtWidgets.QLabel(self.tr("out"))
+        active_breathing_phrase_vbox_l5.addWidget(self.out_text_qll)
+        self.out_text_qll.setWordWrap(True)
+
+    def _setup_add_breathing_phrase_list_to_main_container(self, main_container_hbox_l3):
+        breathing_phrase_list_vbox_l4 = self._setup_new_panel_in_main_window(main_container_hbox_l3)
+        breathing_phrase_list_vbox_l4.addWidget(self.br_phrase_list_wt)
+        self.br_phrase_list_wt.selection_changed_signal.connect(self.on_breathing_list_row_changed)
+        self.br_phrase_list_wt.phrase_changed_signal.connect(self.on_breathing_phrase_changed)
+        self._setup_configure_breathing_settings(breathing_phrase_list_vbox_l4)
+
+    def _setup_add_rest_action_list_to_main_container(self, main_container_hbox_l3):
+        rest_action_list_vbox_l4 = self._setup_new_panel_in_main_window(main_container_hbox_l3)
+        rest_action_list_vbox_l4.addWidget(self.rest_action_list_wt)
+        self.rest_action_list_wt.update_signal.connect(self.on_rest_action_list_updated)
+        self.rest_action_list_wt.selection_changed_signal.connect(self.on_rest_action_list_row_changed)
+        self._setup_configure_rest_settings(rest_action_list_vbox_l4)
+
+    @staticmethod
+    def _setup_new_panel_in_main_window(main_container_hbox_l3):
+        panel_vbox_l4 = QtWidgets.QVBoxLayout()
+        main_container_hbox_l3.addLayout(panel_vbox_l4)
+        return panel_vbox_l4
+
+    def _setup_configure_rest_settings(self, rest_action_list_vbox_l4):
+        rest_action_list_vbox_l4.addWidget(self.rest_settings_wt)
+        self.rest_settings_wt.settings_updated_signal.connect(self.update_rest_timer)
+        self.rest_settings_wt.rest_now_button_clicked_signal.connect(self.on_rest_rest)
+        self.rest_settings_wt.rest_reset_button_clicked_signal.connect(self.update_rest_timer)
+        self.rest_settings_wt.rest_slider_value_changed_signal.connect(self.on_rest_slider_value_changed)
+
+    def _setup_configure_breathing_settings(self, breathing_phrase_list_vbox_l4):
+        breathing_phrase_list_vbox_l4.addWidget(self.br_settings_wt)
+        self.br_settings_wt.updated_signal.connect(self.on_breathing_settings_changed)
+        self.br_settings_wt.breathe_now_button_clicked_signal.connect(self.open_breathing_dialog)
+
+    def _setup_set_window_title(self):
+        if mc.mc_global.testing_bool:
+            data_storage_str = "{Testing - data stored in memory}"
+        else:
+            data_storage_str = "{Live - data stored on hard drive}"
+        window_title_str = (
+            mc.mc_global.APPLICATION_TITLE_STR
+            + " [" + mc.mc_global.APPLICATION_VERSION_STR + "] "
+            + data_storage_str
+        )
+        self.setWindowTitle(window_title_str)
 
     # noinspection PyAttributeOutsideInit
     def setup_systray(self):
@@ -104,47 +148,50 @@ class MainWin(QtWidgets.QMainWindow):
             QtGui.QIcon(mc.model.get_app_systray_icon_path()),
             self
         )
-        self.tray_icon.activated.connect(self.on_systray_activated)
+        # self.tray_icon.activated.connect(self.on_systray_activated)
         self.tray_icon.show()
 
-        logging.info("##### System Information #####")
         systray_available_str = "No"
         if self.tray_icon.isSystemTrayAvailable():
             systray_available_str = "Yes"
-        logging.info("System tray available: " + systray_available_str)
+            mc.mc_global.sys_info_telist.append(("System tray available", systray_available_str))
         notifications_supported_str = "No"
         if self.tray_icon.supportsMessages():
             notifications_supported_str = "Yes"
-        logging.info("System tray notifications supported: " + notifications_supported_str)
+        mc.mc_global.sys_info_telist.append(("System tray notifications supported", notifications_supported_str))
         sys_info = QtCore.QSysInfo()
-        logging.info("buildCpuArchitecture: " + sys_info.buildCpuArchitecture())
-        logging.info("currentCpuArchitecture: " + sys_info.currentCpuArchitecture())
-        logging.info("kernel type and version: " + sys_info.kernelType() + " " + sys_info.kernelVersion())
-        logging.info("product name and version: " + sys_info.prettyProductName())
+        mc.mc_global.sys_info_telist.append(("buildCpuArchitecture", sys_info.buildCpuArchitecture()))
+        mc.mc_global.sys_info_telist.append(("currentCpuArchitecture", sys_info.currentCpuArchitecture()))
+        mc.mc_global.sys_info_telist.append(("kernel type", sys_info.kernelType()))
+        mc.mc_global.sys_info_telist.append(("kernel version", sys_info.kernelVersion()))
+        mc.mc_global.sys_info_telist.append(("product name and version", sys_info.prettyProductName()))
+        logging.info("##### System Information #####")
+        for (descr_str, value) in mc.mc_global.sys_info_telist:
+            logging.info(descr_str + ": " + str(value))
         logging.info("#####")
 
         settings = mc.model.SettingsM.get()
 
         self.tray_menu = QtWidgets.QMenu(self)
 
-        self.sys_tray.rest_enabled_qaction = QtWidgets.QAction("Enable Rest Reminder")
+        self.sys_tray.rest_enabled_qaction = QtWidgets.QAction(self.tr("Enable Rest Reminder"))
         self.tray_menu.addAction(self.sys_tray.rest_enabled_qaction)
         self.sys_tray.rest_enabled_qaction.setCheckable(True)
         self.sys_tray.rest_enabled_qaction.toggled.connect(
             self.rest_settings_wt.on_switch_toggled
         )
-        self.sys_tray.rest_enabled_qaction.setChecked(settings.rest_reminder_active_bool)
+        self.sys_tray.rest_enabled_qaction.setChecked(settings.rest_reminder_active)
         self.sys_tray.rest_progress_qaction = QtWidgets.QAction("")
         self.tray_menu.addAction(self.sys_tray.rest_progress_qaction)
         self.sys_tray.rest_progress_qaction.setDisabled(True)
         self.sys_tray.update_rest_progress_bar(0, 1)
-        self.tray_rest_now_qaction = QtWidgets.QAction("Take a Break Now")
+        self.tray_rest_now_qaction = QtWidgets.QAction(self.tr("Take a Break Now"))
         self.tray_menu.addAction(self.tray_rest_now_qaction)
         self.tray_rest_now_qaction.triggered.connect(self.on_rest_rest)
 
         self.tray_menu.addSeparator()
 
-        self.sys_tray.breathing_enabled_qaction = QtWidgets.QAction("Enable Breathing Reminder")
+        self.sys_tray.breathing_enabled_qaction = QtWidgets.QAction(self.tr("Enable Breathing Reminder"))
         self.tray_menu.addAction(self.sys_tray.breathing_enabled_qaction)
         self.sys_tray.breathing_enabled_qaction.setCheckable(True)
         self.sys_tray.breathing_enabled_qaction.setChecked(settings.breathing_reminder_active_bool)
@@ -152,9 +199,9 @@ class MainWin(QtWidgets.QMainWindow):
             self.br_settings_wt.on_switch_toggled
         )
 
-        self.tray_open_breathing_dialog_qaction = QtWidgets.QAction("Open Breathing Dialog")
+        self.tray_open_breathing_dialog_qaction = QtWidgets.QAction(self.tr("Open Breathing Dialog"))
         self.tray_menu.addAction(self.tray_open_breathing_dialog_qaction)
-        self.tray_open_breathing_dialog_qaction.triggered.connect(self.start_breathing_notification)
+        self.tray_open_breathing_dialog_qaction.triggered.connect(self.open_breathing_dialog)
 
         """
         self.sys_tray.phrase_qaction_list.clear()
@@ -181,10 +228,10 @@ class MainWin(QtWidgets.QMainWindow):
 
         self.tray_menu.addSeparator()
 
-        self.tray_restore_action = QtWidgets.QAction("Open Settings")
+        self.tray_restore_action = QtWidgets.QAction(self.tr("Open Settings"))
         self.tray_menu.addAction(self.tray_restore_action)
         self.tray_restore_action.triggered.connect(self.restore_window)
-        self.tray_quit_action = QtWidgets.QAction("Quit")
+        self.tray_quit_action = QtWidgets.QAction(self.tr("Quit"))
         self.tray_menu.addAction(self.tray_quit_action)
         self.tray_quit_action.triggered.connect(self.exit_application)
 
@@ -228,7 +275,7 @@ class MainWin(QtWidgets.QMainWindow):
 
     def update_rest_timer(self):
         settings = mc.model.SettingsM.get()
-        if settings.rest_reminder_active_bool:
+        if settings.rest_reminder_active:
             self.start_rest_timer()
         else:
             self.stop_rest_timer()
@@ -253,7 +300,7 @@ class MainWin(QtWidgets.QMainWindow):
         mc.mc_global.rest_reminder_minutes_passed_int += 1
         if (mc.mc_global.rest_reminder_minutes_passed_int
                 >= mc.model.SettingsM.get().rest_reminder_interval_int):
-            self.show_rest_reminder()
+            self.start_rest_reminder()
         self.rest_settings_wt.rest_reminder_qsr.setValue(
             mc.mc_global.rest_reminder_minutes_passed_int
         )
@@ -262,7 +309,7 @@ class MainWin(QtWidgets.QMainWindow):
         mc.mc_global.rest_reminder_minutes_passed_int = 0
         # self.update_gui()
         if i_open_breathing_dialog:
-            self.show_breathing_notification()
+            self.open_breathing_dialog()
         self.update_rest_timer()
 
     def restore_window(self):
@@ -270,11 +317,22 @@ class MainWin(QtWidgets.QMainWindow):
         self.showNormal()
         # another alternative (from an SO answer): self.setWindowState(QtCore.Qt.WindowActive)
 
+    def start_rest_reminder(self):
+        notification_type_int = mc.model.SettingsM.get().rest_reminder_notification_type_int
+
+        if (notification_type_int == mc.mc_global.NotificationType.Both.value
+        or notification_type_int == mc.mc_global.NotificationType.Visual.value):
+            self.show_rest_reminder()
+
+        if (notification_type_int == mc.mc_global.NotificationType.Both.value
+        or notification_type_int == mc.mc_global.NotificationType.Audio.value):
+            settings = mc.model.SettingsM.get()
+            audio_path_str = settings.rest_reminder_audio_path_str
+            volume_int = settings.rest_reminder_volume_int
+            self._play_audio(audio_path_str, volume_int)
+
     def show_rest_reminder(self):
-        # self.restore_window()
-        # self.main_area_stacked_widget_l4.setCurrentIndex(self.rrcw_sw_id_int)
-        # self.rest_actions_dock.raise_()
-        self.rest_reminder_dialog = mc.gui.rest_reminder_popup.RestReminderDlg()
+        self.rest_reminder_dialog = mc.gui.rest_notification.RestReminderDlg()
         self.rest_reminder_dialog.rest_signal.connect(self.on_rest_rest)
         self.rest_reminder_dialog.skip_signal.connect(self.on_rest_skip)
         self.rest_reminder_dialog.wait_signal.connect(self.on_rest_wait)
@@ -311,21 +369,21 @@ class MainWin(QtWidgets.QMainWindow):
         self.stop_breathing_timer()
         settings = mc.model.SettingsM.get()
         self.breathing_qtimer = QtCore.QTimer(self)  # -please remember to send "self" to the timer
-        self.breathing_qtimer.timeout.connect(self.start_breathing_notification_if_conditions)
+        self.breathing_qtimer.timeout.connect(self.breathing_timer_timeout)
         # -show_breathing_notification
         self.breathing_qtimer.start(settings.breathing_reminder_interval_int * 60 * 1000)
 
     def update_menu(self):
         self.menu_bar.clear()
 
-        file_menu = self.menu_bar.addMenu("&File")
-        export_action = QtWidgets.QAction("Export data", self)
+        file_menu = self.menu_bar.addMenu(self.tr("&File"))
+        export_action = QtWidgets.QAction(self.tr("Export data"), self)
         file_menu.addAction(export_action)
         export_action.triggered.connect(mc.model.export_all)
-        minimize_to_tray_action = QtWidgets.QAction("Minimize to tray", self)
+        minimize_to_tray_action = QtWidgets.QAction(self.tr("Minimize to tray"), self)
         file_menu.addAction(minimize_to_tray_action)
         minimize_to_tray_action.triggered.connect(self.minimize_to_tray)
-        quit_action = QtWidgets.QAction("Quit", self)
+        quit_action = QtWidgets.QAction(self.tr("Quit"), self)
         file_menu.addAction(quit_action)
         quit_action.triggered.connect(self.exit_application)
 
@@ -333,54 +391,80 @@ class MainWin(QtWidgets.QMainWindow):
         update_gui_action = QtWidgets.QAction("Update GUI", self)
         debug_menu.addAction(update_gui_action)
         update_gui_action.triggered.connect(self.update_gui)
-        breathing_full_screen_action = QtWidgets.QAction("Full screen", self)
+        breathing_full_screen_action = QtWidgets.QAction(self.tr("Full screen"), self)
         debug_menu.addAction(breathing_full_screen_action)
         breathing_full_screen_action.triggered.connect(self.showFullScreen)
-        show_rest_reminder_action = QtWidgets.QAction("Show rest reminder", self)
+        show_rest_reminder_action = QtWidgets.QAction(self.tr("Show rest reminder"), self)
         debug_menu.addAction(show_rest_reminder_action)
-        show_rest_reminder_action.triggered.connect(self.show_rest_reminder)
+        show_rest_reminder_action.triggered.connect(self.start_rest_reminder)
+        show_breathing_notification_action = QtWidgets.QAction("Show breathing notification", self)
+        debug_menu.addAction(show_breathing_notification_action)
+        show_breathing_notification_action.triggered.connect(self.breathing_timer_timeout)
 
-        help_menu = self.menu_bar.addMenu("&Help")
-        about_action = QtWidgets.QAction("About", self)
+        help_menu = self.menu_bar.addMenu(self.tr("&Help"))
+        about_action = QtWidgets.QAction(self.tr("About"), self)
         help_menu.addAction(about_action)
         about_action.triggered.connect(self.show_about_box)
         online_help_action = QtWidgets.QAction("Online help", self)
         help_menu.addAction(online_help_action)
         online_help_action.triggered.connect(self.show_online_help)
-
-    def start_breathing_notification_if_conditions(self):
-        if not self.isActiveWindow() and mc.model.breathing_reminder_active():
-            self.start_breathing_notification()
+        sysinfo_action = QtWidgets.QAction(self.tr("System Information"), self)
+        help_menu.addAction(sysinfo_action)
+        sysinfo_action.triggered.connect(self.show_sysinfo_box)
 
     # noinspection PyAttributeOutsideInit
-    def start_breathing_notification(self):
+    def breathing_timer_timeout(self):
+        if not mc.model.breathing_reminder_active():
+            return
+
+        mc.mc_global.breathing_notification_counter_int += 1
+        if (mc.mc_global.breathing_notification_counter_int
+        > mc.model.SettingsM.get().breathing_reminder_nr_before_dialog_int):
+            mc.mc_global.breathing_notification_counter_int = 0
+            self.open_breathing_dialog()
+        else:
+            self.commence_breathing_notification()
+
+    def commence_breathing_notification(self):
         notification_type_int = mc.model.SettingsM.get().breathing_reminder_notification_type_int
 
-        if (notification_type_int == mc.mc_global.BreathingNotificationType.Both.value
-        or notification_type_int == mc.mc_global.BreathingNotificationType.Visual.value):
-            self.show_breathing_notification()
+        if (notification_type_int == mc.mc_global.NotificationType.Both.value
+        or notification_type_int == mc.mc_global.NotificationType.Visual.value):
+            self.breathing_notification = mc.gui.breathing_notification.BreathingNotification()
+            self.breathing_notification.breathe_signal.connect(self.on_breathing_dialog_breathe_clicked)
+            self.breathing_notification.show()
 
-        if (notification_type_int == mc.mc_global.BreathingNotificationType.Both.value
-        or notification_type_int == mc.mc_global.BreathingNotificationType.Audio.value):
-            self.play_audio()  # "390200__ganapataye__03-bells[cc0].wav"
+        if (notification_type_int == mc.mc_global.NotificationType.Both.value
+        or notification_type_int == mc.mc_global.NotificationType.Audio.value):
+            settings = mc.model.SettingsM.get()
+            audio_path_str = settings.breathing_reminder_audio_path_str
+            volume_int = settings.breathing_reminder_volume_int
+            self._play_audio(audio_path_str, volume_int)
 
-    def show_breathing_notification(self):
-        self.breathing_dialog = mc.gui.breathing_popup.BreathingDlg()
+    def open_breathing_dialog(self):
+        self.breathing_dialog = mc.gui.breathing_dlg.BreathingDlg()
         self.breathing_dialog.close_signal.connect(self.on_breathing_dialog_closed)
         self.breathing_dialog.phrase_changed_signal.connect(self.on_breathing_dialog_phrase_changed)
         self.breathing_dialog.show()
 
-    def play_audio(self) -> None:
         settings = mc.model.SettingsM.get()
-        audio_path_str = settings.breathing_reminder_audio_path_str
+        if settings.breathing_reminder_dialog_audio_active_bool:
+            audio_path_str = settings.breathing_reminder_audio_path_str
+            volume_int = settings.breathing_reminder_volume_int
+            self._play_audio(audio_path_str, volume_int)
 
-        volume_int = settings.breathing_reminder_volume_int
-
-        sound_effect = QtMultimedia.QSoundEffect(self)
-        # -PLEASE NOTE: A parent has to be given here, otherwise we will not hear anything
-        sound_effect.setSource(QtCore.QUrl.fromLocalFile(audio_path_str))
-        sound_effect.setVolume(float(volume_int / 100))
-        sound_effect.play()
+    def _play_audio(self, i_audio_path: str, i_volume: int) -> None:
+        try:
+            sound_effect = QtMultimedia.QSoundEffect(self)
+            # -PLEASE NOTE: A parent has to be given here, otherwise we will not hear anything
+            # noinspection PyCallByClass
+            sound_effect.setSource(QtCore.QUrl.fromLocalFile(i_audio_path))
+            sound_effect.setVolume(float(i_volume / 100))
+            sound_effect.play()
+        except NameError:
+            logging.debug(
+                "NameError - Cannot play audio since QtMultimedia has not been imported"
+            )
 
     def on_breathing_dialog_closed(self, i_ib_list, i_ob_list):
         self.breathing_history_wt.add_from_dialog(i_ib_list, i_ob_list)
@@ -388,6 +472,12 @@ class MainWin(QtWidgets.QMainWindow):
 
     def on_breathing_dialog_phrase_changed(self):
         self.update_gui()
+
+    def on_breathing_dialog_breathe_clicked(self):
+        self.breathing_dialog = mc.gui.breathing_dlg.BreathingDlg()
+        self.breathing_dialog.close_signal.connect(self.on_breathing_dialog_closed)
+        self.breathing_dialog.phrase_changed_signal.connect(self.on_breathing_dialog_phrase_changed)
+        self.breathing_dialog.show()
 
     def debug_clear_breathing_phrase_selection(self):
         self.br_phrase_list_wt.list_widget.clearSelection()
@@ -397,6 +487,19 @@ class MainWin(QtWidgets.QMainWindow):
         # noinspection PyCallByClass
         QtGui.QDesktopServices.openUrl(QtCore.QUrl(url_str))
         # Python: webbrowser.get(url_str) --- doesn't work
+
+    def show_sysinfo_box(self):
+
+        info_str = '\n'.join([
+            descr_str + ": " + str(value) for (descr_str, value) in mc.mc_global.sys_info_telist
+        ])
+
+        # noinspection PyCallByClass
+        QtWidgets.QMessageBox.about(
+            self,
+            "System Information",
+            info_str
+        )
 
     def show_about_box(self):
         # noinspection PyCallByClass
@@ -436,16 +539,24 @@ class MainWin(QtWidgets.QMainWindow):
         # self.breathing_widget.update_gui()
         # self.rest_widget.update_gui()
 
-        if i_event_source != mc.mc_global.EventSource.rest_slider_value_changed:
-            self.rest_settings_wt.update_gui()
-        self.br_settings_wt.update_gui()
+        if mc.mc_global.active_phrase_id_it == mc.mc_global.NO_PHRASE_SELECTED_INT:
+            pass
+        else:
+            breathing_phrase = mc.model.PhrasesM.get(mc.mc_global.active_phrase_id_it)
+            self.title_text_qll.setText(breathing_phrase.title)
+            self.in_text_qll.setText(breathing_phrase.ib)
+            self.out_text_qll.setText(breathing_phrase.ob)
 
-        if (i_event_source != mc.mc_global.EventSource.breathing_list_selection_changed
-        and i_event_source != mc.mc_global.EventSource.rest_list_selection_changed):
-            self.br_phrase_list_wt.update_gui()
-            self.rest_action_list_wt.update_gui()
+            if i_event_source != mc.mc_global.EventSource.rest_slider_value_changed:
+                self.rest_settings_wt.update_gui()
+            self.br_settings_wt.update_gui()
 
-        self.update_systray()
+            if (i_event_source != mc.mc_global.EventSource.breathing_list_selection_changed
+            and i_event_source != mc.mc_global.EventSource.rest_list_selection_changed):
+                self.br_phrase_list_wt.update_gui()
+                self.rest_action_list_wt.update_gui()
+
+            self.update_systray()
 
     def update_systray(self):
         if self.tray_icon is None:
@@ -458,7 +569,7 @@ class MainWin(QtWidgets.QMainWindow):
 
         # Menu
         self.sys_tray.update_breathing_checked(settings.breathing_reminder_active_bool)
-        self.sys_tray.update_rest_checked(settings.rest_reminder_active_bool)
+        self.sys_tray.update_rest_checked(settings.rest_reminder_active)
         self.sys_tray.update_rest_progress_bar(
             mc.mc_global.rest_reminder_minutes_passed_int,
             mc.model.SettingsM.get().rest_reminder_interval_int

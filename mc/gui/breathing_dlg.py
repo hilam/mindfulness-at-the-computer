@@ -7,6 +7,8 @@ import mc.mc_global
 import mc.model
 
 TIME_NOT_SET_FT = 0.0
+BR_WIDTH_FT = 50.0
+BR_HEIGHT_FT = 50.0
 
 
 class BreathingDlg(QtWidgets.QFrame):
@@ -40,6 +42,8 @@ class BreathingDlg(QtWidgets.QFrame):
 
         self.breathing_graphicsview_l3 = GraphicsView()
         vbox_l2.addWidget(self.breathing_graphicsview_l3)
+        self.breathing_graphicsview_l3.setHorizontalScrollBarPolicy(QtCore.Qt.ScrollBarAlwaysOff)
+        self.breathing_graphicsview_l3.setVerticalScrollBarPolicy(QtCore.Qt.ScrollBarAlwaysOff)
         self.breathing_graphicsview_l3.ib_signal.connect(self.start_breathing_in)
         self.breathing_graphicsview_l3.ob_signal.connect(self.start_breathing_out)
 
@@ -49,16 +53,16 @@ class BreathingDlg(QtWidgets.QFrame):
         self.phrases_qcb = QtWidgets.QComboBox()
         buttons_hbox_l3.addWidget(self.phrases_qcb)
         for phrase in mc.model.PhrasesM.get_all():
-            self.phrases_qcb.addItem(phrase.title_str, phrase.id_int)
+            self.phrases_qcb.addItem(phrase.title, phrase.id)
         self.phrases_qcb.activated.connect(self.on_phrases_combo_activated)
 
-        self.close_qpb = CustomPushButton("Close")
+        self.close_qpb = CustomPushButton(self.tr("Close"))
         buttons_hbox_l3.addWidget(self.close_qpb)
         self.close_qpb.pressed.connect(self.on_close_button_clicked)
         self.close_qpb.entered_signal.connect(self.on_close_button_entered)
 
         self.help_qll = QtWidgets.QLabel(
-            "Hover over the central area breathing in and over the background breathing out"
+            self.tr("Hover over the central area breathing in and over the background breathing out")
         )
         vbox_l2.addWidget(self.help_qll, alignment=QtCore.Qt.AlignHCenter)
         font = self.help_qll.font()
@@ -66,7 +70,7 @@ class BreathingDlg(QtWidgets.QFrame):
         self.help_qll.setFont(font)
         self.help_qll.setWordWrap(True)
 
-        self.shortened_phrase_qcb = QtWidgets.QCheckBox("Use shortened")
+        self.shortened_phrase_qcb = QtWidgets.QCheckBox(self.tr("Use shortened"))
         vbox_l2.addWidget(self.shortened_phrase_qcb)
         self.shortened_phrase_qcb.toggled.connect(self.on_shortened_phrase_toggled)
         using_shortened_phrase_bool = False
@@ -109,7 +113,7 @@ class BreathingDlg(QtWidgets.QFrame):
     def start_breathing_in(self):
         phrase = mc.model.PhrasesM.get(mc.mc_global.active_phrase_id_it)
         settings = mc.model.SettingsM.get()
-        self.breath_phrase_id_list.append(phrase.id_int)
+        self.breath_phrase_id_list.append(phrase.id)
         self.ob_qtimeline.stop()
 
         now = time.time()
@@ -130,9 +134,9 @@ class BreathingDlg(QtWidgets.QFrame):
             pass
 
         if self.shortened_phrase_qcb.isChecked():
-            breathing_str = phrase.ib_short_str
+            breathing_str = phrase.ib_short
         else:
-            breathing_str = phrase.ib_str
+            breathing_str = phrase.ib
         self.breathing_graphicsview_l3.text_gi.setHtml(mc.mc_global.get_html(breathing_str))
 
         self.ib_qtimeline.start()
@@ -146,9 +150,9 @@ class BreathingDlg(QtWidgets.QFrame):
         self.start_time_ft = now
 
         if self.shortened_phrase_qcb.isChecked():
-            breathing_str = phrase.ob_short_str
+            breathing_str = phrase.ob_short
         else:
-            breathing_str = phrase.ob_str
+            breathing_str = phrase.ob
         self.breathing_graphicsview_l3.text_gi.setHtml(mc.mc_global.get_html(breathing_str))
 
         self.ob_qtimeline.start()
@@ -212,6 +216,7 @@ class BreathingDlg(QtWidgets.QFrame):
             self.on_close_button_clicked()
 
     def on_close_button_clicked(self):
+        mc.mc_global.breathing_state = mc.mc_global.BreathingState.inactive
 
         if len(self.ob_length_ft_list) < len(self.ib_length_ft_list):
             now = time.time()
@@ -281,7 +286,7 @@ class GraphicsView(QtWidgets.QGraphicsView):
         self.graphics_scene.addItem(self.text_gi)
         self.text_gi.setAcceptHoverEvents(False)
         # -so that the underlying item will not be disturbed
-        ib_str = mc.model.PhrasesM.get(mc.mc_global.active_phrase_id_it).ib_str
+        ib_str = mc.model.PhrasesM.get(mc.mc_global.active_phrase_id_it).ib
         # self.text_gi.setPlainText(ib_str)
         self.text_gi.setHtml(mc.mc_global.get_html(ib_str))
         self.text_gi.setTextWidth(200)
@@ -291,11 +296,37 @@ class GraphicsView(QtWidgets.QGraphicsView):
         self.peak_scale_ft = 1
 
     def ib_start(self):
-        self.ib_signal.emit()
-        self.text_gi.update_pos_and_origin_point(self.view_width_int, self.view_height_int)
-        self.custom_gi.update_pos_and_origin_point(self.view_width_int, self.view_height_int)
+        if mc.mc_global.breathing_state == mc.mc_global.BreathingState.breathing_in:
+            return
+
+        small_qsize = QtCore.QSizeF(BR_WIDTH_FT, BR_HEIGHT_FT)
+        pos_pointf = QtWidgets.QGraphicsItem.mapFromItem(
+            self.custom_gi, self.custom_gi,
+            self.custom_gi.x() + (self.custom_gi.boundingRect().width() - small_qsize.width()) / 2,
+            self.custom_gi.y() + (self.custom_gi.boundingRect().height() - small_qsize.height()) / 2
+        )
+        # -widget coords
+        small_widget_coords_qrect = QtCore.QRectF(pos_pointf, small_qsize)
+        # QtWidgets.QGraphicsItem
+
+        cursor = QtGui.QCursor()  # -screen coords
+        cursor_pos_widget_coords_qp = self.mapFromGlobal(cursor.pos())  # -widget coords
+
+        logging.debug("cursor.pos() = " + str(cursor.pos()))
+        logging.debug("cursor_pos_widget_coords_qp = " + str(cursor_pos_widget_coords_qp))
+        logging.debug("small_widget_coords_qrect = " + str(small_widget_coords_qrect))
+
+        if small_widget_coords_qrect.contains(cursor_pos_widget_coords_qp):
+            mc.mc_global.breathing_state = mc.mc_global.BreathingState.breathing_in
+            self.ib_signal.emit()
+            self.text_gi.update_pos_and_origin_point(self.view_width_int, self.view_height_int)
+            self.custom_gi.update_pos_and_origin_point(self.view_width_int, self.view_height_int)
 
     def ob_start(self):
+        if mc.mc_global.breathing_state != mc.mc_global.BreathingState.breathing_in:
+            return
+        mc.mc_global.breathing_state = mc.mc_global.BreathingState.breathing_out
+
         self.peak_scale_ft = self.text_gi.scale()
         self.ob_signal.emit()
         self.text_gi.update_pos_and_origin_point(self.view_width_int, self.view_height_int)
@@ -332,7 +363,7 @@ class BreathingGraphicsObject(QtWidgets.QGraphicsObject):
 
     def __init__(self):
         super().__init__()
-        self.rectf = QtCore.QRectF(0.0, 0.0, 50.0, 50.0)
+        self.rectf = QtCore.QRectF(0.0, 0.0, BR_WIDTH_FT, BR_HEIGHT_FT)
         self.setAcceptHoverEvents(True)
 
     # Overridden
@@ -345,8 +376,8 @@ class BreathingGraphicsObject(QtWidgets.QGraphicsObject):
         return self.rectf
 
     # Overridden
-    def hoverEnterEvent(self, i_QGraphicsSceneHoverEvent):
-        logging.debug("hoverEnterEvent")
+    def hoverMoveEvent(self, QGraphicsSceneHoverEvent):
+        # logging.debug("hoverMoveEvent")
         self.enter_signal.emit()
 
     # Overridden

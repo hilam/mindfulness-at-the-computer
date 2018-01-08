@@ -6,25 +6,24 @@ from PyQt5 import QtGui
 import mc.mc_global
 import mc.model
 
+WINDOW_FLAGS = (
+    QtCore.Qt.Dialog
+    | QtCore.Qt.WindowStaysOnTopHint
+    | QtCore.Qt.FramelessWindowHint
+    | QtCore.Qt.WindowDoesNotAcceptFocus
+    | QtCore.Qt.BypassWindowManagerHint
+)
+
 
 class RestReminderDlg(QtWidgets.QFrame):
-    # close_signal = QtCore.pyqtSignal(list, list)
     rest_signal = QtCore.pyqtSignal()
     skip_signal = QtCore.pyqtSignal()
     wait_signal = QtCore.pyqtSignal()
 
     def __init__(self):
-        super().__init__()
+        super().__init__(None, WINDOW_FLAGS)
 
         self.hover_and_kb_active_bool = False
-
-        self.setWindowFlags(
-            QtCore.Qt.Popup
-            | QtCore.Qt.WindowStaysOnTopHint
-            | QtCore.Qt.FramelessWindowHint
-        )
-        # | QtCore.Qt.WindowStaysOnTopHint
-        # | QtCore.Qt.X11BypassWindowManagerHint
 
         self.setFrameStyle(QtWidgets.QFrame.Box | QtWidgets.QFrame.Plain)
         self.setLineWidth(1)
@@ -32,24 +31,24 @@ class RestReminderDlg(QtWidgets.QFrame):
         vbox_l2 = QtWidgets.QVBoxLayout()
         self.setLayout(vbox_l2)
 
-        self.reminder_qll = QtWidgets.QLabel("Please take good care of your body and mind")
+        self.reminder_qll = QtWidgets.QLabel(self.tr("Please take good care of your body and mind"))
         vbox_l2.addWidget(self.reminder_qll)
 
         hbox = QtWidgets.QHBoxLayout()
         vbox_l2.addLayout(hbox)
 
-        self.rest_qpb = CustomButton("Rest")
+        self.rest_qpb = CustomButton(self.tr("Rest"))
         hbox.addWidget(self.rest_qpb)
         self.rest_qpb.clicked.connect(self.on_rest_button_clicked)
         self.rest_qpb.setFont(mc.mc_global.get_font_medium(i_bold=True))
         # self.rest_qpb.clicked.connect(self.on_close_button_clicked)
         # self.rest_qpb.entered_signal.connect(self.on_close_button_hover)
 
-        self.wait_qpb = CustomButton("Wait")
+        self.wait_qpb = CustomButton(self.tr("Wait"))
         hbox.addWidget(self.wait_qpb)
         self.wait_qpb.clicked.connect(self.on_wait_button_clicked)
 
-        self.skip_qpb = CustomButton("Skip")
+        self.skip_qpb = CustomButton(self.tr("Skip"))
         hbox.addWidget(self.skip_qpb)
         self.skip_qpb.clicked.connect(self.on_skip_button_clicked)
 
@@ -59,28 +58,21 @@ class RestReminderDlg(QtWidgets.QFrame):
 
         # Set position - done after show to get the right size hint
         screen_qrect = QtWidgets.QApplication.desktop().availableGeometry()
-        self.xpos_int = screen_qrect.left() + (screen_qrect.width() - self.sizeHint().width()) // 2
-        self.ypos_int = screen_qrect.bottom() - self.sizeHint().height() - 50
-        self.move(self.xpos_int, self.ypos_int)
+        xpos_int = screen_qrect.right() - self.sizeHint().width() - 30
+        ypos_int = screen_qrect.top() + 30
+        self.move(xpos_int, ypos_int)
 
-        self.start_cursor_timer()
+        self.shown_qtimer = None
+        self.start_shown_timer()
 
-    def start_cursor_timer(self):
-        self.cursor_qtimer = QtCore.QTimer(self)  # -please remember to send "self" to the timer
-        self.cursor_qtimer.setSingleShot(True)
-        self.cursor_qtimer.timeout.connect(self.cursor_timer_timeout)
-        self.cursor_qtimer.start(2500)
+    def start_shown_timer(self):
+        self.shown_qtimer = QtCore.QTimer(self)  # -please remember to send "self" to the timer
+        self.shown_qtimer.setSingleShot(True)
+        self.shown_qtimer.timeout.connect(self.shown_timer_timeout)
+        self.shown_qtimer.start(6500)
 
-    def cursor_timer_timeout(self):
-        cursor = QtGui.QCursor()
-        if self.geometry().contains(cursor.pos()):
-            pass
-        else:
-            cursor.setPos(
-                self.xpos_int + self.width() // 2,
-                self.ypos_int + self.height() // 2
-            )
-            self.setCursor(cursor)
+    def shown_timer_timeout(self):
+        self.on_wait_button_clicked()
 
     def on_rest_button_clicked(self):
         self.rest_signal.emit()
